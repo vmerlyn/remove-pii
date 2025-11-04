@@ -3,6 +3,14 @@ import sys
 from pathlib import Path
 import ocrmypdf
 
+
+import fitz  # PyMuPDF
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from pathlib import Path
+
 def main():
     parser = argparse.ArgumentParser(
         description='OCR PDF files using ocrmypdf',
@@ -72,6 +80,44 @@ def main():
     except Exception as e:
         print(f"Error processing PDF: {e}", file=sys.stderr)
         sys.exit(1)
+
+    #Redact the pdf
+    print(f"Redacting PDF: {args.output_file} -> {args.output_file}_redacted.pdf")
+    redact_pdf(args.output_file, args.output_file+"_redacted.pdf")
+
+def redact_pdf(input_pdf, output_pdf):
+    # Step 1: Open the PDF and extract text from each page
+    doc = fitz.open(input_pdf)
+    page_texts = [page.get_text() for page in doc]
+
+    # Step 2: Initialize Presidio engines
+    analyzer = AnalyzerEngine()
+    anonymizer = AnonymizerEngine()
+
+    # Step 3: Detect and redact PII
+    redacted_texts = []
+    for text in page_texts:
+        pii_results = analyzer.analyze(text=text, language='en')
+        redacted = anonymizer.anonymize(text=text, analyzer_results=pii_results)
+        redacted_texts.append(redacted.text)
+
+    # Step 4: Write redacted text back into a new PDF
+    c = canvas.Canvas(output_pdf, pagesize=letter)
+    width, height = letter
+
+    for redacted_page in redacted_texts:
+        c.setFont("Helvetica", 10)
+        y = height - 40
+        for line in redacted_page.splitlines():
+            c.drawString(40, y, line[:100])
+            y -= 12
+            if y < 40:
+                c.showPage()
+                y = height - 40
+        c.showPage()
+    
+    c.save()
+    print(f"Redacted PDF saved to: {output_pdf}")
 
 
 if __name__ == "__main__":
